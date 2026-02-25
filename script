@@ -1,0 +1,82 @@
+
+# 1️⃣ Setup folders
+cd "/mnt/c/Users/dell/OneDrive/Desktop/VRF/ATAC seq"
+mkdir -p homer_results
+mkdir -p deepTools_results
+# -------------------------------
+# 2️⃣ Merge peaks and standardize ±250bp
+# -------------------------------
+# GSE230793
+cat GSE230793_ATAC/*.bed | sort -k1,1 -k2,2n | bedtools merge > merged_230793.bed
+awk '{mid=int(($2+$3)/2); print $1, mid-250, mid+250}' OFS="\t" merged_230793.bed > GSE230793_ATAC_peaks_std.bed
+
+# GSE230798
+cat GSE230798_ATAC/*.bed | sort -k1,1 -k2,2n | bedtools merge > merged_230798.bed
+awk '{mid=int(($2+$3)/2); print $1, mid-250, mid+250}' OFS="\t" merged_230798.bed > GSE230798_ATAC_peaks_std.bed
+
+# -------------------------------
+# 3️⃣ Identify common & unique peaks
+# -------------------------------
+bedtools intersect -a GSE230793_ATAC_peaks_std.bed -b GSE230798_ATAC_peaks_std.bed > ATAC_common_peaks.bed
+bedtools subtract -a GSE230793_ATAC_peaks_std.bed -b GSE230798_ATAC_peaks_std.bed > ATAC_230793_unique.bed
+bedtools subtract -a GSE230798_ATAC_peaks_std.bed -b GSE230793_ATAC_peaks_std.bed > ATAC_230798_unique.bed
+
+# -------------------------------
+# 4️⃣ HOMER motif discovery
+# -------------------------------
+# Make sure hg38 is installed
+perl ~/miniconda3/share/homer/configureHomer.pl -install hg38
+
+# Motif analysis
+findMotifsGenome.pl ATAC_common_peaks.bed hg38 homer_results/ATAC_common/ -size 500 -mask
+findMotifsGenome.pl ATAC_230793_unique.bed hg38 homer_results/230793_unique/ -size 500 -mask
+findMotifsGenome.pl ATAC_230798_unique.bed hg38 homer_results/230798_unique/ -size 500 -mask
+
+# -------------------------------
+# 5️⃣ deepTools matrix (heatmaps & profiles)
+# -------------------------------
+# Common peaks
+computeMatrix reference-point \
+  -S GSE230793_ATAC/*.bw GSE230798_ATAC/*.bw \
+  -R ATAC_common_peaks.bed \
+  --referencePoint center -b 2000 -a 2000 \
+  -out deepTools_results/ATAC_common_matrix.gz --skipZeros --binSize 50
+
+# Unique peaks
+computeMatrix reference-point \
+  -S GSE230793_ATAC/*.bw GSE230798_ATAC/*.bw \
+  -R ATAC_230793_unique.bed \
+  --referencePoint center -b 2000 -a 2000 \
+  -out deepTools_results/ATAC_230793_matrix.gz --skipZeros --binSize 50
+
+computeMatrix reference-point \
+  -S GSE230793_ATAC/*.bw GSE230798_ATAC/*.bw \
+  -R ATAC_230798_unique.bed \
+  --referencePoint center -b 2000 -a 2000 \
+  -out deepTools_results/ATAC_230798_matrix.gz --skipZeros --binSize 50
+
+# -------------------------------
+# 6️⃣ Plot heatmaps
+# -------------------------------
+plotHeatmap -m deepTools_results/ATAC_common_matrix.gz -out deepTools_results/ATAC_common_heatmap.png --colorMap Reds --whatToShow 'heatmap and colorbar'
+plotHeatmap -m deepTools_results/ATAC_230793_matrix.gz -out deepTools_results/ATAC_230793_heatmap.png --colorMap Blues --whatToShow 'heatmap and colorbar'
+plotHeatmap -m deepTools_results/ATAC_230798_matrix.gz -out deepTools_results/ATAC_230798_heatmap.png --colorMap Greens --whatToShow 'heatmap and colorbar'
+
+# -------------------------------
+# 7️⃣ Plot average signal profiles
+# -------------------------------
+plotProfile -m deepTools_results/ATAC_common_matrix.gz -out deepTools_results/ATAC_common_profile.png --perGroup
+plotProfile -m deepTools_results/ATAC_230793_matrix.gz -out deepTools_results/ATAC_230793_profile.png --perGroup
+plotProfile -m deepTools_results/ATAC_230798_matrix.gz -out deepTools_results/ATAC_230798_profile.png --perGroup
+
+# -------------------------------
+# 8️⃣ Annotate peaks to genes
+# -------------------------------
+annotatePeaks.pl ATAC_common_peaks.bed hg38 > homer_results/ATAC_common_peaks_annotation.txt
+annotatePeaks.pl ATAC_230793_unique.bed hg38 > homer_results/ATAC_230793_unique_peaks_annotation.txt
+annotatePeaks.pl ATAC_230798_unique.bed hg38 > homer_results/ATAC_230798_unique_peaks_annotation.txt
+
+# Optional: extract unique gene lists for GO/KEGG
+awk 'NR>1 {print $7}' homer_results/ATAC_common_peaks_annotation.txt | sort | uniq > ATAC_common_genes.txt
+awk 'NR>1 {print $7}' homer_results/ATAC_230793_unique_peaks_annotation.txt | sort | uniq > ATAC_230793_genes.txt
+awk 'NR>1 {print $7}' homer_results/ATAC_230798_unique_peaks_annotation.txt | sort | uniq > ATAC_230798_genes.txt
